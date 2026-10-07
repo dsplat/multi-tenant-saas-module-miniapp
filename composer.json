@@ -1,0 +1,29 @@
+{
+  "name": "dsplat/multi-tenant-saas-module-miniapp",
+  "description": "小程序发布 - 配置/构建产物/登录桥（微信小程序代码包发布）",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": "^8.3",
+    "dsplat/multi-tenant-saas": "^1.0 || ^2.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "MultiTenantSaas\\Modules\\Miniapp\\": ""
+    }
+  },
+  "extra": {
+    "saas": {
+      "name": "miniapp",
+      "label": "小程序",
+      "priority": 300,
+      "dependencies": [],
+      "conflicts": [],
+      "requires_core": ">=1.0.0",
+      "provider": "MultiTenantSaas\\Modules\\Miniapp\\MiniappServiceProvider",
+      "tenant_toggleable": true,
+      "module_loadable": true,
+      "default_tenant_enabled": true
+    }
+  }
+}
