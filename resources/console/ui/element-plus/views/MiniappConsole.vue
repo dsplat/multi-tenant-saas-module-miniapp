@@ -141,7 +141,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { http } from '@scrm/shared'
+import { http, moduleApiPrefix } from '@multi-tenant-saas/console/shared/http'
 
 const router = useRouter()
 
@@ -184,7 +184,7 @@ const appSecretConfigured = computed(() => !!mpWeixin.value.app_secret_masked)
 async function loadConfig() {
   configLoading.value = true
   try {
-    const res = (await http.get('/biz/miniapp/config')) as any
+    const res = (await http.get(`${moduleApiPrefix('miniapp')}/miniapp/config`)) as any
     const data = res?.data ?? res
     authMode.value = data.auth_mode === 'component' ? 'component' : 'self'
     common.value = { ...common.value, ...(data.common || {}) }
@@ -219,7 +219,7 @@ async function handleSave() {
       },
     }
 
-    await http.put('/biz/miniapp/config', payload)
+    await http.put(`${moduleApiPrefix('miniapp')}/miniapp/config`, payload)
     ElMessage.success('配置已保存')
     await loadConfig()
   } catch (e: any) {
@@ -285,7 +285,7 @@ function platformLabel(platform: string): string {
 async function loadBuilds() {
   buildLoading.value = true
   try {
-    const res = (await http.get(`/biz/miniapp/builds?platform=${buildPlatform.value}`)) as any
+    const res = (await http.get(`${moduleApiPrefix('miniapp')}/miniapp/builds?platform=${buildPlatform.value}`)) as any
     const data = res?.data ?? res
     builds.value = Array.isArray(data) ? data : []
     // 有进行中任务 → 3s 轮询直至终态；无任务则停轮询（省无效请求）
@@ -314,7 +314,7 @@ function stopPolling() {
 async function handleCreateBuild() {
   building.value = true
   try {
-    await http.post('/biz/miniapp/builds', { platform: buildPlatform.value })
+    await http.post(`${moduleApiPrefix('miniapp')}/miniapp/builds`, { platform: buildPlatform.value })
     ElMessage.success('构建任务已发起')
     await loadBuilds() // 进入排队态后由轮询接管
   } catch (e: any) {
@@ -327,7 +327,7 @@ async function handleCreateBuild() {
 async function downloadArtifact(row: BuildRecord) {
   try {
     // 需携带 auth token 下载，走共享 http（responseType blob 由拦截器原样透出）
-    const blob = (await http.get(`/biz/miniapp/builds/${row.build_id}/artifact`, {
+    const blob = (await http.get(`${moduleApiPrefix('miniapp')}/miniapp/builds/${row.build_id}/artifact`, {
       responseType: 'blob',
     } as any)) as unknown as Blob
     const url = URL.createObjectURL(blob)
