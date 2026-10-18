@@ -10,6 +10,8 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use MultiTenantSaas\Concerns\HasTaskAuthEnvelope;
+use MultiTenantSaas\Context\CarriesTaskAuthEnvelope;
 use MultiTenantSaas\Modules\Miniapp\Models\MiniappBuild;
 use MultiTenantSaas\Modules\Miniapp\Services\MiniappBuildService;
 use MultiTenantSaas\Scopes\TenantScope;
@@ -27,9 +29,10 @@ use MultiTenantSaas\Scopes\TenantScope;
  *   在长时间构建时丢任务（构建内部异常已在 Service 捕获转 failed，不会
  *   走到 worker 级重试）
  */
-class MiniappBuildJob implements ShouldQueue
+class MiniappBuildJob implements CarriesTaskAuthEnvelope, ShouldQueue
 {
     use Dispatchable;
+    use HasTaskAuthEnvelope;
     use InteractsWithQueue;
     use Queueable;
     use SerializesModels;

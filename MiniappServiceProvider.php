@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MultiTenantSaas\Modules\Miniapp;
 
 use Illuminate\Support\Facades\Route;
+use MultiTenantSaas\Contracts\ExecutionSubjectStateContract;
 use MultiTenantSaas\Modules\Contracts\ModuleServiceProvider;
 use MultiTenantSaas\Modules\Infrastructure\Http\Middleware\VerifyOperatorTenant;
 
@@ -29,6 +30,13 @@ use MultiTenantSaas\Modules\Infrastructure\Http\Middleware\VerifyOperatorTenant;
 class MiniappServiceProvider extends ModuleServiceProvider
 {
     protected string $moduleName = 'miniapp';
+
+    protected function bootModule(): void
+    {
+        if ($this->app->bound(ExecutionSubjectStateContract::class)) {
+            $this->app->make(ExecutionSubjectStateContract::class)->trustService('miniapp.build');
+        }
+    }
 
     protected function loadModuleRoutes(): void
     {

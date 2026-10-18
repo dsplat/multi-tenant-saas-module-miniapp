@@ -7,7 +7,10 @@ namespace MultiTenantSaas\Modules\Miniapp\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use MultiTenantSaas\Context\ExecutionIdentity;
+use MultiTenantSaas\Context\TaskAuthEnvelope;
 use MultiTenantSaas\Context\TenantContext;
+use MultiTenantSaas\Contracts\ExecutionIdentityContract;
 use MultiTenantSaas\Http\Controllers\BaseController;
 use MultiTenantSaas\Modules\Miniapp\Jobs\MiniappBuildJob;
 use MultiTenantSaas\Modules\Miniapp\Models\MiniappBuild;
@@ -91,7 +94,12 @@ class MiniappBuildController extends BaseController
             'config_snapshot' => $this->config->snapshot($tenantId),
         ]);
 
-        MiniappBuildJob::dispatch($build->build_id);
+        $identity = app(ExecutionIdentityContract::class)->current();
+        $envelope = $identity instanceof ExecutionIdentity
+            ? TaskAuthEnvelope::fromIdentity($identity, 'miniapp.build')
+            : TaskAuthEnvelope::forService('miniapp.build', $tenantId, 'miniapp.build');
+
+        MiniappBuildJob::dispatch($build->build_id)->withTaskAuthEnvelope($envelope);
 
         return response()->json(['success' => true, 'data' => $this->toArray($build->refresh())], 201);
     }
