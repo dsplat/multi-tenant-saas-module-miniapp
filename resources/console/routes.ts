@@ -7,7 +7,7 @@ const routes: RouteRecordRaw[] = [
     path: 'miniapp',
     name: 'MiniappConsole',
     component: view('miniapp', 'MiniappConsole'),
-    meta: { title: '小程序发布' },
+    meta: { title: '小程序发布', permission: 'miniapp.view' },
   },
 ]
 
