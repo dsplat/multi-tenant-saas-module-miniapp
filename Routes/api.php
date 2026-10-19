@@ -10,9 +10,16 @@ use MultiTenantSaas\Modules\Miniapp\Http\Controllers\MiniappConfigController;
 // （config('miniapp.route_prefix') + '/miniapp'，如 scrm 的 api/v1/biz/miniapp，
 // 全新安装默认 api/v1/miniapp）+ 后台中间件链 [api, auth:sanctum,
 // VerifyOperatorTenant, tenant.ensure]。故此处路由路径不含 miniapp 段。
-Route::get('/config', [MiniappConfigController::class, 'show']);
-Route::put('/config', [MiniappConfigController::class, 'update']);
+//
+// P0 授权门（ADR v2.5）：读 → miniapp.view；写/构建 → miniapp.manage。
+Route::get('/config', [MiniappConfigController::class, 'show'])
+    ->middleware('rbac.permission:miniapp.view');
+Route::put('/config', [MiniappConfigController::class, 'update'])
+    ->middleware('rbac.permission:miniapp.manage');
 
-Route::get('/builds', [MiniappBuildController::class, 'index']);
-Route::post('/builds', [MiniappBuildController::class, 'store']);
-Route::get('/builds/{build}/artifact', [MiniappBuildController::class, 'artifact']);
+Route::get('/builds', [MiniappBuildController::class, 'index'])
+    ->middleware('rbac.permission:miniapp.view');
+Route::post('/builds', [MiniappBuildController::class, 'store'])
+    ->middleware('rbac.permission:miniapp.manage');
+Route::get('/builds/{build}/artifact', [MiniappBuildController::class, 'artifact'])
+    ->middleware('rbac.permission:miniapp.view');
