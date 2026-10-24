@@ -7,6 +7,8 @@ namespace MultiTenantSaas\Modules\Miniapp\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use MultiTenantSaas\Http\Controllers\BaseController;
+use MultiTenantSaas\Modules\Auth\Http\Controllers\Concerns\EnforcesLoginPolicy;
+use MultiTenantSaas\Modules\Auth\Http\Controllers\Concerns\RejectsDelegatedAuth;
 use MultiTenantSaas\Modules\Auth\Models\User;
 use MultiTenantSaas\Modules\Wechat\Services\WechatMiniProgramService;
 
@@ -27,6 +29,9 @@ use MultiTenantSaas\Modules\Wechat\Services\WechatMiniProgramService;
  */
 class MiniappAuthController extends BaseController
 {
+    use EnforcesLoginPolicy;
+    use RejectsDelegatedAuth;
+
     public function __construct(
         protected WechatMiniProgramService $loginService,
     ) {}
@@ -39,12 +44,25 @@ class MiniappAuthController extends BaseController
             'avatar' => 'nullable|string|max:500',
         ]);
 
-        $tenantId = (int) ($request->attributes->get('tenant_id') ?? 0);
+        // 租户来源与其它公开认证入口同源：中间件 attributes 优先，回退显式选择
+        // （query/租户头仅用于定位该租户的登录凭证，不授予任何业务权限）。
+        $tenantId = (int) ($request->attributes->get('tenant_id')
+            ?? $request->query('tenant_id')
+            ?? $request->header('X-Tenant-ID')
+            ?? 0);
         if ($tenantId <= 0) {
             return response()->json([
                 'success' => false,
                 'message' => '无法识别租户，请通过租户域名访问',
             ], 400);
+        }
+
+        // IdP 委托 / sso_only：小程序登录同为认证通道，不得成为旁路
+        if ($rejected = $this->rejectIfDelegated($request, $tenantId)) {
+            return $rejected;
+        }
+        if ($rejected = $this->rejectIfSsoOnly($request, 'miniapp', $tenantId)) {
+            return $rejected;
         }
 
         try {
