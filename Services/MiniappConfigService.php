@@ -5,8 +5,12 @@ declare(strict_types=1);
 namespace MultiTenantSaas\Modules\Miniapp\Services;
 
 use Illuminate\Support\Facades\Schema;
+use MultiTenantSaas\Context\ClientPlatformContext;
+use MultiTenantSaas\Exceptions\DomainException;
+use MultiTenantSaas\Exceptions\NotFoundException;
 use MultiTenantSaas\Modules\Infrastructure\Models\Tenant;
 use MultiTenantSaas\Modules\Infrastructure\Models\TenantSetting;
+use MultiTenantSaas\Modules\Infrastructure\Services\ModuleManager;
 use MultiTenantSaas\Modules\WechatComponent\Models\Authorization;
 use MultiTenantSaas\Modules\WechatComponent\Services\WechatComponentService;
 
@@ -198,6 +202,96 @@ class MiniappConfigService
     }
 
     // ==================================================================
+    // 按端选择性发布（模块粒度，事实源框架 tenant_module_platforms）
+    // ==================================================================
+
+    /**
+     * 本租户的小程序端发布清单（配置台消费）
+     *
+     * 行集 = 该租户已开通的模块（ModuleManager::listForTenant 的口径，含系统级 +
+     * 租户级 + 权益四层判定），每行给出该端是否发布。
+     *
+     * 为什么以「租户已开通模块」为行集而不是维护一份小程序页面-模块映射表：
+     * 页面归属是前端工程的事实（apps/h5/src/pages.json 与构建裁剪脚本），后端一旦
+     * 复制一份就会与前端漂移——真正需要双端一致的只有「哪个模块在这个端发不发」，
+     * 而那一层的唯一事实源已是框架的 tenant_module_platforms（构建期与运行期同源）。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function publishRows(int $tenantId): array
+    {
+        $modules = app(ModuleManager::class);
+        $overrides = $modules->platformStatusesForTenant($tenantId, ClientPlatformContext::PLATFORM_MP_WEIXIN);
+
+        $rows = [];
+        foreach ($modules->listForTenant($tenantId) as $module) {
+            $name = (string) $module['name'];
+
+            // published 语义：未写过例外行 = 跟随租户默认（开），与运行期判定同口径
+            $rows[] = [
+                'name' => $name,
+                'label' => (string) ($module['description'] ?? '') ?: $name,
+                'enabled_for_tenant' => (bool) $module['enabled'],
+                'published_on_mp' => ! array_key_exists($name, $overrides) || $overrides[$name] === true,
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * 小程序端**未发布**的模块名列表（构建期消费：注入 VITE_MP_DISABLED_MODULES）
+     *
+     * 只列出显式关了该端的模块；跟随默认的模块不在其中，前端按「未列入 = 发布」处理。
+     *
+     * @return array<int, string>
+     */
+    public function mpDisabledModules(int $tenantId): array
+    {
+        $overrides = app(ModuleManager::class)
+            ->platformStatusesForTenant($tenantId, ClientPlatformContext::PLATFORM_MP_WEIXIN);
+
+        return array_values(array_keys(array_filter($overrides, static fn (bool $published): bool => ! $published)));
+    }
+
+    /**
+     * 写入小程序端发布选择（键 = 模块名，值 = 是否在该端发布）
+     *
+     * 只写请求里出现过的模块：未出现的保持原值（增量保存）。整体覆盖式写入更简单，
+     * 但配置台一旦分页/分组渲染，未渲染到的模块会被静默抹回默认值——那是把 UI 的
+     * 渲染范围当成用户的发布决定，不能这么干。
+     *
+     * 写的是框架的端例外表，不动 tenant_modules：关掉小程序端的课程不影响 H5 与后台。
+     *
+     * @param  array<string, mixed>  $published  模块名 => bool
+     * @return array<int, string> 实际写入的模块名
+     *
+     * @throws DomainException 值非布尔（"0"/"false" 这类字符串一律拒，不猜意图）
+     * @throws NotFoundException 模块未安装（框架 setTenantPlatform 同口径）
+     */
+    public function saveMpPublish(int $tenantId, array $published): array
+    {
+        $modules = app(ModuleManager::class);
+        $written = [];
+
+        foreach ($published as $name => $value) {
+            $name = trim((string) $name);
+            if ($name === '') {
+                continue;
+            }
+
+            if (! is_bool($value)) {
+                throw new DomainException("模块 [{$name}] 的小程序端发布状态必须是布尔值，收到 ".get_debug_type($value));
+            }
+
+            $modules->setTenantPlatform($name, $tenantId, ClientPlatformContext::PLATFORM_MP_WEIXIN, $value);
+            $written[] = $name;
+        }
+
+        return $written;
+    }
+
+    // ==================================================================
     // 组合视图（Controller/构建 Job 消费）
     // ==================================================================
 
@@ -215,6 +309,8 @@ class MiniappConfigService
         $data = [
             'auth_mode' => $authMode,
             'common' => $this->common($tenantId),
+            // 按端选择性发布：模块粒度，事实源框架 tenant_module_platforms
+            'mp_publish' => $this->publishRows($tenantId),
             'mp_weixin' => [
                 // 登录总闸只读（框架 oauth.wechat_miniapp_enabled，与登录服务同源）
                 'enabled' => $this->enabled($tenantId),
@@ -264,6 +360,10 @@ class MiniappConfigService
      * 一致；url_check 供打包调试；brand_primary 供小程序构建期注入主题色（无 DOM 不能
      * 运行时覆盖）。不携带 app_secret（构建不消费，登录已上移框架，快照不落明文 secret
      * 更安全）。
+     *
+     * mp_disabled_modules 把发起时的「该端不发布模块」选择固化进快照：定向编译必须
+     * 与点下「构建」那一刻的选择一致，否则重跑同一构建记录会得到不同页面集合的产物，
+     * 审核包与后台所见无法对账。
      */
     public function snapshot(int $tenantId): array
     {
@@ -271,6 +371,7 @@ class MiniappConfigService
             'auth_mode' => $this->authMode($tenantId),
             'common' => $this->common($tenantId),
             'mp_weixin' => $this->mpWeixin($tenantId),
+            'mp_disabled_modules' => $this->mpDisabledModules($tenantId),
             'appid' => $this->appid($tenantId),
             'brand_primary' => $this->brandPrimary($tenantId),
         ];

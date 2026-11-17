@@ -70,6 +70,26 @@
               <span class="switch-hint">{{ mpWeixin.url_check ? '开（仅开发期：不校验 request 合法域名）' : '关（生产：校验合法域名）' }}</span>
             </el-form-item>
 
+            <el-divider content-position="left">小程序端功能发布</el-divider>
+            <el-form-item>
+              <div class="form-tip">
+                关闭的模块在<strong>下一次发起构建</strong>时从产物中剔除（相关页面不进包），同时该端的接口请求按未发布拒绝；
+                H5 端与本后台不受影响。合规诉求（如类目不含课程销售/视频播放/AI 问答）请在此下线，不要只改前端入口。
+              </div>
+              <el-table v-loading="configLoading" :data="publishRows" stripe size="small" style="width: 100%; margin-top: 8px">
+                <el-table-column label="模块" min-width="220">
+                  <template #default="{ row }">{{ row.label }}</template>
+                </el-table-column>
+                <el-table-column label="小程序端" width="140">
+                  <template #default="{ row }">
+                    <el-switch v-model="row.published_on_mp" />
+                  </template>
+                </el-table-column>
+                <el-table-column prop="name" label="标识" width="160" />
+              </el-table>
+              <div v-if="!publishRows.length" class="form-tip">本租户未开通任何业务模块，无可发布项。</div>
+            </el-form-item>
+
             <el-form-item>
               <el-button type="primary" :loading="saving" @click="handleSave">保存设置</el-button>
             </el-form-item>
@@ -101,6 +121,17 @@
             <el-table-column label="版本" min-width="130">
               <template #default="{ row }">
                 {{ row.config_snapshot?.common?.version_name || '—' }}
+              </template>
+            </el-table-column>
+            <!-- 定向编译范围留痕：审核问询「这个包为什么没有某功能」时，以发起时的快照作答 -->
+            <el-table-column label="该端下线模块" min-width="180">
+              <template #default="{ row }">
+                <template v-if="row.config_snapshot?.mp_disabled_modules?.length">
+                  <el-tag v-for="name in row.config_snapshot.mp_disabled_modules" :key="name" size="small" type="info" class="disabled-tag">
+                    {{ name }}
+                  </el-tag>
+                </template>
+                <span v-else class="status-hint">全部发布</span>
               </template>
             </el-table-column>
             <el-table-column label="状态" width="110">
@@ -164,10 +195,18 @@ interface CommonConfig {
   version_code: number | string
   api_domain: string
 }
+/** 模块在某端的发布选择（后端 mp_publish 行；框架 tenant_module_platforms 的视图） */
+interface MpPublishRow {
+  name: string
+  label: string
+  enabled_for_tenant: boolean
+  published_on_mp: boolean
+}
 interface MiniappConfig {
   auth_mode: 'component' | 'self'
   common: CommonConfig
   mp_weixin: MpWeixinConfig
+  mp_publish?: MpPublishRow[]
 }
 
 const activeTab = ref('config')
@@ -177,6 +216,12 @@ const authMode = ref<'component' | 'self'>('self')
 const common = ref<CommonConfig>({ name: '', version_name: '', version_code: '', api_domain: '' })
 const mpWeixin = ref<MpWeixinConfig>({ enabled: false, appid: '', app_secret_masked: null, url_check: false })
 const componentInfo = ref<ComponentInfo | null>(null)
+const mpPublish = ref<MpPublishRow[]>([])
+/** 载入时的发布状态，保存时只提交差异 */
+const publishBaseline = ref<Record<string, boolean>>({})
+
+/** 只列本租户实际开通的模块：未开通的模块在哪个端都不存在，列出来只能造成误解 */
+const publishRows = computed(() => mpPublish.value.filter((row) => row.enabled_for_tenant))
 
 /** 框架登录 secret 是否已配置（只读展示掩码，值取自框架 oauth 组） */
 const appSecretConfigured = computed(() => !!mpWeixin.value.app_secret_masked)
@@ -196,11 +241,25 @@ async function loadConfig() {
       url_check: !!mp.url_check,
     }
     componentInfo.value = mp.component || null
+    mpPublish.value = Array.isArray(data.mp_publish) ? data.mp_publish : []
+    publishBaseline.value = Object.fromEntries(mpPublish.value.map((row) => [row.name, row.published_on_mp]))
   } catch (e: any) {
     ElMessage.error(e?.message || '加载配置失败')
   } finally {
     configLoading.value = false
   }
+}
+
+/** 与载入基线的差异（模块名 => 新状态）；无差异返回空对象 */
+function publishDiff(): Record<string, boolean> {
+  const changed: Record<string, boolean> = {}
+  for (const row of mpPublish.value) {
+    if (publishBaseline.value[row.name] !== row.published_on_mp) {
+      changed[row.name] = row.published_on_mp
+    }
+  }
+
+  return changed
 }
 
 async function handleSave() {
@@ -219,8 +278,14 @@ async function handleSave() {
       },
     }
 
+    // 发布选择只提交差异：后端按「出现过的模块」增量写入，整表提交会把未渲染到的模块抹回默认值
+    const changed = publishDiff()
+    if (Object.keys(changed).length) {
+      payload.mp_publish = changed
+    }
+
     await http.put(`${moduleApiPrefix('miniapp')}/miniapp/config`, payload)
-    ElMessage.success('配置已保存')
+    ElMessage.success(Object.keys(changed).length ? '配置已保存（含端发布变更，需重新构建产物才生效）' : '配置已保存')
     await loadConfig()
   } catch (e: any) {
     ElMessage.error(e?.message || '保存失败')
@@ -241,7 +306,11 @@ interface BuildRecord {
   platform: string
   channel: string
   status: BuildStatus
-  config_snapshot: { auth_mode?: string; common?: { version_name?: string } } | null
+  config_snapshot: {
+    auth_mode?: string
+    common?: { version_name?: string }
+    mp_disabled_modules?: string[]
+  } | null
   error: string | null
   last_log: string | null
   started_at: string | null

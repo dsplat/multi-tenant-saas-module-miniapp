@@ -58,12 +58,11 @@ class MiniappBuildService
             $log = [];
             $workDir = $this->prepareWorkDir($build, $log);
 
-            $manifestPath = $workDir . '/' . self::H5_MANIFEST_REL;
+            $manifestPath = $workDir.'/'.self::H5_MANIFEST_REL;
             $this->writeManifest($manifestPath, $snapshot);
             $log[] = '[miniapp] manifest.json 已写入（名称/版本/appid/urlCheck）';
 
-            $apiBase = $this->resolveApiBase($snapshot);
-            $brandPrimary = $this->resolveBrandPrimary($snapshot);
+            $env = $this->buildEnv($snapshot);
             $this->runProcess(
                 [$this->bin('pnpm'), 'install', '--frozen-lockfile', '--prefer-offline'],
                 $workDir,
@@ -75,14 +74,16 @@ class MiniappBuildService
             $this->runProcess(
                 [$this->bin('pnpm'), '--filter', 'h5', 'build:mp-weixin'],
                 $workDir,
-                ['VITE_API_BASE' => $apiBase, 'VITE_BRAND_PRIMARY' => $brandPrimary],
+                $env,
                 $log
             );
-            $log[] = '[miniapp] mp-weixin 构建完成，API 域: ' . $apiBase . '，品牌色: ' . $brandPrimary;
+            $log[] = '[miniapp] mp-weixin 构建完成，API 域: '.$env['VITE_API_BASE']
+                .'，品牌色: '.$env['VITE_BRAND_PRIMARY']
+                .'，该端不发布模块: '.($env['VITE_MP_DISABLED_MODULES'] === '' ? '无' : $env['VITE_MP_DISABLED_MODULES']);
 
-            $mpDistDir = $workDir . '/' . self::MP_DIST_REL;
+            $mpDistDir = $workDir.'/'.self::MP_DIST_REL;
             if (! is_dir($mpDistDir)) {
-                throw new DomainException('构建产物目录缺失（预期 ' . self::MP_DIST_REL . '），请确认 h5 工程 build:mp-weixin 脚本输出路径');
+                throw new DomainException('构建产物目录缺失（预期 '.self::MP_DIST_REL.'），请确认 h5 工程 build:mp-weixin 脚本输出路径');
             }
 
             // 双保险 patch project.config.json（不依赖 uni 对 manifest mp-weixin.setting 的透传）
@@ -151,12 +152,12 @@ class MiniappBuildService
     protected function prepareWorkDir(MiniappBuild $build, array &$log): string
     {
         $workspace = (string) config('miniapp.workspace_path', '/data/miniapp/workspace');
-        if (! is_dir($workspace) || ! is_dir($workspace . '/apps/h5')) {
+        if (! is_dir($workspace) || ! is_dir($workspace.'/apps/h5')) {
             throw new ServiceUnavailableException("构建模板 workspace 未就绪（预期 {$workspace}/apps/h5），请联系平台初始化构建环境");
         }
 
         $root = rtrim((string) config('miniapp.builds_root', '/data/miniapp/builds'), '/');
-        $workDir = $root . '/' . $build->tenant_id . '/' . $build->build_id;
+        $workDir = $root.'/'.$build->tenant_id.'/'.$build->build_id;
 
         if (! is_dir($workDir) && ! @mkdir($workDir, 0755, true) && ! is_dir($workDir)) {
             throw new StorageException("工作目录创建失败：{$workDir}");
@@ -169,8 +170,8 @@ class MiniappBuildService
                 '--exclude', 'node_modules', '--exclude', 'dist',
                 '--exclude', '.git', '--exclude', '.vite',
                 '--exclude', '.mimocode', '--exclude', '*.log',
-                rtrim($workspace, '/') . '/',
-                rtrim($workDir, '/') . '/',
+                rtrim($workspace, '/').'/',
+                rtrim($workDir, '/').'/',
             ],
             dirname($workspace),
             [],
@@ -218,10 +219,10 @@ class MiniappBuildService
 
         $encoded = json_encode($merged, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         if ($encoded === false) {
-            throw new DomainException('manifest.json 序列化失败：' . json_last_error_msg());
+            throw new DomainException('manifest.json 序列化失败：'.json_last_error_msg());
         }
 
-        file_put_contents($manifestPath, $encoded . "\n");
+        file_put_contents($manifestPath, $encoded."\n");
     }
 
     /**
@@ -229,7 +230,7 @@ class MiniappBuildService
      */
     protected function patchProjectConfig(string $mpDistDir, array $snapshot): void
     {
-        $path = $mpDistDir . '/project.config.json';
+        $path = $mpDistDir.'/project.config.json';
         $raw = @file_get_contents($path);
         if ($raw === false) {
             throw new NotFoundException("project.config.json 缺失：{$path}");
@@ -243,7 +244,7 @@ class MiniappBuildService
         $config['appid'] = $this->resolveAppid($snapshot);
         $config['setting']['urlCheck'] = (bool) (($snapshot['mp_weixin']['url_check'] ?? false));
 
-        file_put_contents($path, json_encode($config, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+        file_put_contents($path, json_encode($config, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
     }
 
     /**
@@ -253,7 +254,7 @@ class MiniappBuildService
     {
         $disk = Storage::disk('local');
         $relative = trim((string) config('miniapp.artifact_root', 'miniapp'), '/')
-            . '/' . $build->tenant_id . '/' . $build->build_id . '.zip';
+            .'/'.$build->tenant_id.'/'.$build->build_id.'.zip';
         $zipPath = $disk->path($relative);
 
         // 压缩 mp-weixin 目录本身（zip 内顶层为 mp-weixin/，微信开发者工具/上传方接受）
@@ -311,9 +312,9 @@ class MiniappBuildService
 
         $base = str_starts_with($domain, 'http://') || str_starts_with($domain, 'https://')
             ? $domain
-            : 'https://' . $domain;
+            : 'https://'.$domain;
 
-        return str_ends_with($base, '/api/v1') ? $base : rtrim($base, '/') . '/api/v1';
+        return str_ends_with($base, '/api/v1') ? $base : rtrim($base, '/').'/api/v1';
     }
 
     /**
@@ -331,6 +332,58 @@ class MiniappBuildService
     }
 
     /**
+     * 构建期注入给 uni 构建进程的环境（与前端工程的契约面，一处定义）
+     *
+     * VITE_MP_DISABLED_MODULES 是「定向编译」的通道：前端 build:mp-weixin 前置的页面
+     * 裁剪脚本按它从 pages.json 摘掉未发布模块的页面，产物因此根本不含这些页面代码
+     * ——微信审核看的是包内容，入口隐藏或接口 403 都不算下线。键名与取值形态
+     * （逗号分隔、空串表示全部发布）是与 scrm-platform-front/scripts/trim-mp-pages.mjs
+     * 的硬约定，改一边必须改另一边。
+     *
+     * @return array<string, string>
+     */
+    public function buildEnv(array $snapshot): array
+    {
+        return [
+            'VITE_API_BASE' => $this->resolveApiBase($snapshot),
+            'VITE_BRAND_PRIMARY' => $this->resolveBrandPrimary($snapshot),
+            'VITE_MP_DISABLED_MODULES' => implode(',', $this->resolveDisabledModules($snapshot)),
+        ];
+    }
+
+    /**
+     * 该端不发布的模块清单（取自快照 mp_disabled_modules，缺失时按空处理）
+     *
+     * 空清单不等于失败：老构建记录的快照没有这个键，重跑时按「全部发布」出产物，
+     * 与改动之前的行为一致。真正的定向裁剪只在发起构建那一刻已关掉某些端时发生。
+     *
+     * @return array<int, string> 模块注册键，已去空白、去重、按字典序（日志与产物可比对）
+     */
+    protected function resolveDisabledModules(array $snapshot): array
+    {
+        $raw = $snapshot['mp_disabled_modules'] ?? [];
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $names = [];
+        foreach ($raw as $name) {
+            if (! is_string($name)) {
+                continue;
+            }
+
+            $name = trim($name);
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+
+        sort($names);
+
+        return array_values(array_unique($names));
+    }
+
+    /**
      * 执行外部命令（默认 Symfony Process；测试注入假 runner）
      */
     protected function runProcess(array $cmd, string $cwd, array $env, array &$log): string
@@ -338,7 +391,7 @@ class MiniappBuildService
         $runner = $this->commandRunner;
         if ($runner !== null) {
             $output = (string) $runner($cmd, $cwd, $env);
-            $log[] = '$ ' . implode(' ', $cmd);
+            $log[] = '$ '.implode(' ', $cmd);
 
             return $output;
         }
@@ -347,13 +400,13 @@ class MiniappBuildService
         $process = new Process($cmd, $cwd, $env, null, $timeout);
         $process->run();
 
-        $output = $process->getOutput() . $process->getErrorOutput();
-        $log[] = '$ ' . implode(' ', $cmd);
+        $output = $process->getOutput().$process->getErrorOutput();
+        $log[] = '$ '.implode(' ', $cmd);
 
         if (! $process->isSuccessful()) {
             $detail = mb_substr(trim((string) $output), 0, 4000);
             $log[] = $detail;
-            throw new ServiceUnavailableException('命令执行失败 [' . implode(' ', $cmd) . ']：' . ($detail !== '' ? $detail : '无输出'));
+            throw new ServiceUnavailableException('命令执行失败 ['.implode(' ', $cmd).']：'.($detail !== '' ? $detail : '无输出'));
         }
 
         return (string) $output;
